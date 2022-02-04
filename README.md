@@ -1,6 +1,6 @@
 # repzo-task
 
-npm i\
+npm i
 
 
 npm run start
