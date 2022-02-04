@@ -44,11 +44,6 @@ function getDayNumber(day) {
 
 const reportCache = new NodeCache();
 
-const simulateAsyncPause = () =>
-  new Promise((resolve) => {
-    setTimeout(() => resolve(), 1000);
-  });
-
 MongoClient.connect(
   process.env.MONGO_URI,
   { useNewUrlParser: true, useUnifiedTopology: true },
