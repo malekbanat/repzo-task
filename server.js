@@ -1,5 +1,6 @@
 require("rootpath")();
 
+const NodeCache = require("node-cache");
 const dotenv = require("dotenv");
 dotenv.config();
 
@@ -40,91 +41,110 @@ function getDayNumber(day) {
       return 0;
   }
 }
+
+const reportCache = new NodeCache();
+
+const simulateAsyncPause = () =>
+  new Promise((resolve) => {
+    setTimeout(() => resolve(), 1000);
+  });
+
 MongoClient.connect(
   process.env.MONGO_URI,
   { useNewUrlParser: true, useUnifiedTopology: true },
-  (err, client) => {
+  async (err, client) => {
     if (err) return console.error(err);
     console.log("Connected to Database");
     const db = client.db(process.env.DB_DATABASE);
+    visitsStream = db.collection("visits").watch();
+    visitsStream.on("change", (next) => {
+      console.log("received a change to the collection: \t", next);
+      reportCache.flushAll();
+    });
     app.get("/less-visited-clients-per-day", async (req, res) => {
       const { from, to, day } = req.query;
       const weekDayNum = getDayNumber(day);
+      const cahcedReport = await reportCache.get(`${from}-${to}-${weekDayNum}`);
 
-      await db
-        .collection("clients")
-        .aggregate([
-          {
-            $lookup: {
-              from: "visits",
-              localField: "_id",
-              foreignField: "client",
-              as: "visits",
-            },
-          },
-          {
-            $unwind: {
-              path: "$visits",
-              preserveNullAndEmptyArrays: true,
-            },
-          },
-          {
-            $match: {
-              "visits.time": { $gte: parseFloat(from), $lte: parseFloat(to) },
-            },
-          },
-          {
-            $addFields: {
-              "visits.convertedDate": { $toDate: "$visits.time" },
-            },
-          },
-          {
-            $addFields: {
-              "visits.dayOfWeek": { $dayOfWeek: "$visits.convertedDate" },
-            },
-          },
-          {
-            $addFields: {
-              "visits.visited": {
-                $cond: [
-                  { $eq: ["$visits.dayOfWeek", weekDayNum] },
-                  true,
-                  false,
-                ],
+      if (cahcedReport) {
+        return res.send(cahcedReport);
+      } else {
+        await db
+          .collection("clients")
+          .aggregate([
+            {
+              $lookup: {
+                from: "visits",
+                localField: "_id",
+                foreignField: "client",
+                as: "visits",
               },
             },
-          },
-          {
-            $group: {
-              _id: "$_id",
-              countVisit: {
-                $sum: { $cond: ["$visits.visited", 1, 0] },
+            {
+              $unwind: {
+                path: "$visits",
+                preserveNullAndEmptyArrays: true,
               },
-              visits: {
-                $push: {
+            },
+            {
+              $match: {
+                "visits.time": { $gte: parseFloat(from), $lte: parseFloat(to) },
+              },
+            },
+            {
+              $addFields: {
+                "visits.convertedDate": { $toDate: "$visits.time" },
+              },
+            },
+            {
+              $addFields: {
+                "visits.dayOfWeek": { $dayOfWeek: "$visits.convertedDate" },
+              },
+            },
+            {
+              $addFields: {
+                "visits.visited": {
                   $cond: [
-                    { $eq: ["$visits.visited", true] },
-                    { visits: "$visits" },
-                    null,
+                    { $eq: ["$visits.dayOfWeek", weekDayNum] },
+                    true,
+                    false,
                   ],
                 },
               },
             },
-          },
-
-          {
-            $project: {
-              visits: { $setDifference: ["$visits", [null]] },
-              countVisit: 1,
+            {
+              $group: {
+                _id: "$_id",
+                countVisit: {
+                  $sum: { $cond: ["$visits.visited", 1, 0] },
+                },
+                visits: {
+                  $push: {
+                    $cond: [
+                      { $eq: ["$visits.visited", true] },
+                      { visits: "$visits" },
+                      null,
+                    ],
+                  },
+                },
+              },
             },
-          },
-          { $sort: { countVisit: 1 } },
-        ])
-        .toArray()
-        .then((results) => {
-          res.send(results);
-        })
-        .catch((error) => console.error(error));
+
+            {
+              $project: {
+                visits: { $setDifference: ["$visits", [null]] },
+                countVisit: 1,
+              },
+            },
+            { $sort: { countVisit: 1 } },
+          ])
+          .toArray()
+          .then((results) => {
+            reportCache.set(`${from}-${to}-${weekDayNum}`, results);
+            res.send(results);
+          })
+          .catch((error) => console.error(error));
+      }
     });
   }
 );
