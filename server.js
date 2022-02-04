@@ -86,13 +86,20 @@ MongoClient.connect(
           {
             $addFields: {
               "visits.visited": {
-                $cond: [{ $eq: ["$visits.dayOfWeek", weekDayNum] }, true, false],
+                $cond: [
+                  { $eq: ["$visits.dayOfWeek", weekDayNum] },
+                  true,
+                  false,
+                ],
               },
             },
           },
           {
             $group: {
               _id: "$_id",
+              countVisit: {
+                $sum: { $cond: ["$visits.visited", 1, 0] },
+              },
               visits: {
                 $push: {
                   $cond: [
@@ -108,9 +115,10 @@ MongoClient.connect(
           {
             $project: {
               visits: { $setDifference: ["$visits", [null]] },
-              count: 1,
+              countVisit: 1,
             },
           },
+          { $sort: { countVisit: 1 } },
         ])
         .toArray()
         .then((results) => {
