@@ -49,13 +49,19 @@ MongoClient.connect(
   { useNewUrlParser: true, useUnifiedTopology: true },
   async (err, client) => {
     if (err) return console.error(err);
+
+
     console.log("Connected to Database");
     const db = client.db(process.env.DB_DATABASE);
+
+
     visitsStream = db.collection("visits").watch();
     visitsStream.on("change", (next) => {
       console.log("received a change to the collection: \t", next);
       reportCache.flushAll();
     });
+
+    
     app.get("/less-visited-clients-per-day", async (req, res) => {
       const { from, to, day } = req.query;
       const weekDayNum = getDayNumber(day);
